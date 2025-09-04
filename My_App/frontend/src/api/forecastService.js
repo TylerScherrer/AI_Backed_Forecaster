@@ -2,11 +2,18 @@
 import { API_BASE } from "./base";
 
 /**
+ * API_BASE already includes `/api` (e.g. https://...azurewebsites.net/api)
+ * so do NOT prepend another `/api` here.
+ */
+const join = (path) =>
+  `${API_BASE.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
+
+/**
  * GET /api/forecast/:store_id
  * Returns: { history: [...], forecast: [...] | {...} }
  */
 export async function fetchForecast(storeId) {
-  const res = await fetch(`${API_BASE}/api/forecast/${storeId}`);
+  const res = await fetch(join(`forecast/${storeId}`));
   if (!res.ok) throw new Error(`forecast ${res.status}`);
   return res.json();
 }
@@ -32,14 +39,13 @@ export async function explainForecast(rawTimeline, focus) {
 
   const body = focus ? { view: "total", timeline, focus } : { view: "total", timeline };
 
-  const res = await fetch(`${API_BASE}/api/explain_forecast`, {
+  const res = await fetch(join("explain_forecast"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
-    // keep UI stable on 4xx/5xx
     try { return await res.json(); } catch { return { summary: "" }; }
   }
   return res.json();
