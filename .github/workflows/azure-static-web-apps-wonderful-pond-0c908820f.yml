@@ -15,8 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Use Node.js 20
         uses: actions/setup-node@v4
@@ -25,29 +27,35 @@ jobs:
           cache: npm
           cache-dependency-path: My_App/frontend/package-lock.json
 
-      - name: Install deps & build (CRA uses .env.production automatically)
+      - name: Install deps & build (CRA)
         working-directory: My_App/frontend
         run: |
           npm ci
           CI=false npm run build
-      - name: Deploy to Azure Static Web Apps
+
+      # Upload the PREBUILT assets (skip Oryx entirely)
+      - name: Deploy to Azure Static Web Apps (upload prebuilt)
         uses: Azure/static-web-apps-deploy@v1
         with:
-          action: upload
-          app_location: My_App/frontend
-          output_location: build
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-
+          action: upload
+          # IMPORTANT: point at the *built* folder
+          app_location: My_App/frontend/build
+          # Must be empty when skip_app_build is true
+          output_location: ''
+          skip_app_build: true
 
   # --------------------------- BACKEND (Flask -> App Service) ---------------------------
   backend:
     runs-on: ubuntu-latest
-    needs: frontend   # optional; remove this line to deploy independently
+    needs: frontend   # remove this line if you want independent deploys
     permissions:
       id-token: write
       contents: read
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -56,10 +64,16 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
 
-      # Deploy the My_App folder so App Service sees requirements.txt at My_App/ and your code at My_App/backend
-      - name: Deploy to Azure Web App
+      # Zip-deploy the app folder to App Service.
+      # Expectation:
+      #   - Code lives under My_App/backend/
+      #   - requirements.txt is either at My_App/ (preferred) or My_App/backend/
+      #   - App Service startup command will run gunicorn against backend.run:app
+      - name: Deploy to Azure Web App (zipdeploy)
         uses: azure/webapps-deploy@v3
         with:
           app-name: AI-Powered-Forecaster
           slot-name: Production
           package: My_App
+          # Known-good startup command (escapes $ for YAML)
+          startup-command: gunicorn --bind=0.0.0.0:\$PORT --timeout 600 --pythonpath backend backend.run:app
