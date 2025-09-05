@@ -45,17 +45,15 @@ jobs:
           output_location: ''
           skip_app_build: true
 
-  # --------------------------- BACKEND (Flask -> App Service) ---------------------------
+   # --------------------------- BACKEND (Flask -> App Service) ---------------------------
   backend:
     runs-on: ubuntu-latest
-    needs: frontend   # remove this line if you want independent deploys
+    needs: frontend   # optional; remove this line to deploy independently
     permissions:
       id-token: write
       contents: read
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -64,16 +62,10 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
 
-      # Zip-deploy the app folder to App Service.
-      # Expectation:
-      #   - Code lives under My_App/backend/
-      #   - requirements.txt is either at My_App/ (preferred) or My_App/backend/
-      #   - App Service startup command will run gunicorn against backend.run:app
-      - name: Deploy to Azure Web App (zipdeploy)
+      # Deploy the My_App folder so App Service sees requirements.txt at My_App/ and your code at My_App/backend
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: AI-Powered-Forecaster
           slot-name: Production
           package: My_App
-          # Known-good startup command (escapes $ for YAML)
-          startup-command: gunicorn --bind=0.0.0.0:\$PORT --timeout 600 --pythonpath backend backend.run:app
