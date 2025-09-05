@@ -1,59 +1,22 @@
-// src/pages/Home.js
-
-/**
- * Home Page
- * ----------
- * UX summary
- * - Loads the store list (cache-first with ETA + background refresh).
- * - When a store is chosen, loads history + forecast and asks the AI for a summary.
- * - Clicking a point on the chart opens a small popup next to the point with a
- *   focused AI explanation (“point-and-explain”). A right-side panel shows the
- *   broader summary.
- *
- * Data contracts
- * - GET  /api/stores                 → store list (array or { stores: [...] })
- * - GET  /api/forecast/:storeId      → { history: [...], forecast: [...] }
- * - POST /api/explain_forecast       → { summary }   (accepts { timeline, focus? })
- */
-
 import { useEffect, useRef, useState } from "react";
 import StoreSelector from "../components/StoreSelector";
 import { fetchStores } from "../api/storeService";
+import { fetchForecast, explainForecast } from "../api/forecastService";
 import {
-  Box,
-  Container,
-  Flex,
-  IconButton,
-  Text,
-  Grid,
-  GridItem,
-  Button,
-  useDisclosure,
-  Drawer,
-  DrawerBody,
-  DrawerContent,
-  DrawerHeader,
-  DrawerOverlay,
-  Alert,
-  AlertIcon,
-  HStack,
-  Progress,
-  Spinner,
-  useToast,
+  Box, Container, Flex, IconButton, Text, Grid, GridItem, Button, useDisclosure,
+  Drawer, DrawerBody, DrawerContent, DrawerHeader, DrawerOverlay, Alert, AlertIcon,
+  HStack, Progress, Spinner, useToast,
 } from "@chakra-ui/react";
 import { ArrowBackIcon, ArrowForwardIcon } from "@chakra-ui/icons";
 import ForecastChart from "../components/ForecastChart";
 import CategoryBreakdownChart from "../components/CategoryBreakdownChart";
 import AIInsight from "../components/AIInsight";
+import { API_BASE } from "../api/base";
 
-const BASE_URL = "http://localhost:5000";
-
-/* ---------------- Inline loader components (no extra files) ---------------- */
-
+/* ---------------- Inline loader components ---------------- */
 function LoadingStoresCard({ etaMs = 1500, label = "Loading stores…" }) {
   const start = useRef(Date.now());
   const [remaining, setRemaining] = useState(etaMs);
-
   useEffect(() => {
     start.current = Date.now();
     setRemaining(etaMs);
@@ -63,10 +26,8 @@ function LoadingStoresCard({ etaMs = 1500, label = "Loading stores…" }) {
     }, 100);
     return () => clearInterval(id);
   }, [etaMs]);
-
   const pct = etaMs > 0 ? Math.min(100, ((etaMs - remaining) / etaMs) * 100) : 0;
   const fmt = (ms) => `${Math.max(0, ms / 1000).toFixed(1)}s`;
-
   return (
     <Box p={4} borderWidth="1px" borderRadius="xl" bg="white" shadow="sm">
       <HStack spacing={3} mb={3}>
@@ -77,70 +38,45 @@ function LoadingStoresCard({ etaMs = 1500, label = "Loading stores…" }) {
       </HStack>
       <Progress value={pct} size="sm" isAnimated hasStripe />
       <Text mt={2} fontSize="sm" color="gray.600">
-        Preparing store list. This depends on network speed.
+        {label.toLowerCase().includes("forecast")
+          ? "First request after a cold start can take ~30–60s while the API warms and loads artifacts."
+          : "Preparing store list. This depends on network speed."}
       </Text>
     </Box>
   );
 }
 
-function RefreshingBar({ etaMs = 1500 }) {
-  const start = useRef(Date.now());
-  const [remaining, setRemaining] = useState(etaMs);
-  useEffect(() => {
-    start.current = Date.now();
-    setRemaining(etaMs);
-    const id = setInterval(() => {
-      const elapsed = Date.now() - start.current;
-      setRemaining(Math.max(0, etaMs - elapsed));
-    }, 100);
-    return () => clearInterval(id);
-  }, [etaMs]);
-  const pct = etaMs > 0 ? Math.min(100, ((etaMs - remaining) / etaMs) * 100) : 0;
-  const fmt = (ms) => `${Math.max(0, ms / 1000).toFixed(1)}s`;
-  return (
-    <Box mt={2}>
-      <HStack spacing={2} mb={1}>
-        <Text fontSize="sm" color="gray.700" fontWeight="medium">
-          Refreshing store list…
-        </Text>
-        <Text fontSize="sm" color="gray.600">ETA: {fmt(remaining)}</Text>
-      </HStack>
-      <Progress value={pct} size="xs" isAnimated hasStripe />
-    </Box>
-  );
-}
+// Keeping this here for reference, but we won't render it anymore.
+// function RefreshingBar({ etaMs = 1500 }) { ... }
 
-/* ---------------- Page component ---------------- */
-
+/* ---------------- Page ---------------- */
 export default function Home() {
   const toast = useToast();
 
-  /* Focus popup state for the clicked point */
-  const [focusPoint, setFocusPoint] = useState(null);     // { date, value, source, cx?, cy? }
+  // Focus popup from chart
+  const [focusPoint, setFocusPoint] = useState(null);
   const [focusLoading, setFocusLoading] = useState(false);
   const [focusSummary, setFocusSummary] = useState("");
 
-  /* Stores + selection */
+  // Stores + selection
   const [storeList, setStoreList] = useState([]);
-  const [selectedStore, setSelectedStore] = useState("");
+  const [selectedStore, setSelectedStore] = useState(null); // keep option or id
 
-  /* Timeline data */
+  // Data
   const [timeline, setTimeline] = useState([]);
   const [history, setHistory] = useState([]);
   const [forecast, setForecast] = useState([]);
 
-  /* AI (right panel) */
+  // AI (right panel)
   const [summary, setSummary] = useState("");
   const [loadingInsight, setLoadingInsight] = useState(false);
 
-  /* Chart view toggle */
+  // View toggle
   const graphViews = ["total", "category"];
   const [graphViewIndex, setGraphViewIndex] = useState(0);
-
-  /* Mobile drawer for AI panel */
   const drawer = useDisclosure();
 
-  /* Loading UX for stores */
+  // Loading UX for stores
   const [loadingStores, setLoadingStores] = useState(true);
   const [refreshingStores, setRefreshingStores] = useState(false);
   const [storesError, setStoresError] = useState("");
@@ -158,7 +94,30 @@ export default function Home() {
     setEtaMs(ema);
   };
 
-  /* 1) Load store list (cache-first + background refresh) */
+  // NEW: Forecast/AI loaders with ETA (persisted EMA)
+  const FORECAST_ETA_KEY = "forecastLoadEMA";
+  const AI_ETA_KEY = "aiLoadEMA";
+  const [loadingForecast, setLoadingForecast] = useState(false);
+  const [etaForecast, setEtaForecast] = useState(
+    Number(localStorage.getItem(FORECAST_ETA_KEY)) || 25000
+  );
+  const [etaAi, setEtaAi] = useState(
+    Number(localStorage.getItem(AI_ETA_KEY)) || 8000
+  );
+  const updateForecastEma = (duration) => {
+    const prev = Number(localStorage.getItem(FORECAST_ETA_KEY)) || 25000;
+    const ema = Math.round(prev * 0.7 + duration * 0.3);
+    localStorage.setItem(FORECAST_ETA_KEY, String(ema));
+    setEtaForecast(ema);
+  };
+  const updateAiEma = (duration) => {
+    const prev = Number(localStorage.getItem(AI_ETA_KEY)) || 8000;
+    const ema = Math.round(prev * 0.7 + duration * 0.3);
+    localStorage.setItem(AI_ETA_KEY, String(ema));
+    setEtaAi(ema);
+  };
+
+  // 1) Load store list (cache-first + background refresh)
   useEffect(() => {
     let cancelled = false;
 
@@ -183,7 +142,7 @@ export default function Home() {
       setStoresError("");
       const started = Date.now();
       try {
-        const stores = await fetchStores(); // normalized by api/storeService
+        const stores = await fetchStores({ min_year: 2020, min_points: 5 });
         const list = Array.isArray(stores) ? stores : (stores?.stores || stores || []);
         if (!cancelled) {
           setStoreList(list);
@@ -211,88 +170,105 @@ export default function Home() {
     setRefreshingStores(hadCache);
     fetchAndRecord(!hadCache);
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* 2) Load forecast/history + AI when a store is selected */
+  // 2) When a store is chosen, load history + forecast and ask AI
   useEffect(() => {
     if (!selectedStore) return;
 
-    // clear previous focus highlight when changing stores
     setFocusPoint(null);
     setFocusSummary("");
     setFocusLoading(false);
 
     const run = async () => {
       try {
-        const res = await fetch(`${BASE_URL}/api/forecast/${selectedStore}`);
-        const data = await res.json();
+        const id = Number(selectedStore?.value ?? selectedStore);
+
+        // ---- Forecast (now tracked with ETA) ----
+        setLoadingForecast(true);
+        const t0 = Date.now();
+        const data = await fetchForecast(id); // GET { history, forecast }
+        updateForecastEma(Date.now() - t0);
+        setLoadingForecast(false);
+
+        // Normalize to a single timeline for charts & AI
         const historyData = Array.isArray(data.history) ? data.history : [];
         const forecastData = Array.isArray(data.forecast)
           ? data.forecast
           : data.forecast
           ? [data.forecast]
           : [];
-        const combinedTimeline = [...historyData, ...forecastData];
 
-        setHistory(historyData);
-        setForecast(forecastData);
-        setTimeline(combinedTimeline);
+        const histPoints = historyData.map((d) => ({
+          date: (d.date || "").slice(0, 10), // "YYYY-MM-DD"
+          total: Number(d.total_sales ?? d.total ?? d.value ?? 0),
+          source: "actual",
+          categories: d.categories || null,
+        }));
+        const fcstPoints = forecastData.map((d) => ({
+          date: ((d.date || "").length === 7 ? `${d.date}-01` : d.date).slice(0, 10),
+          total: Number(d.sales ?? d.total ?? d.value ?? 0),
+          source: "forecast",
+        }));
 
-        await fetchAIInsight(combinedTimeline); // refresh right-panel summary
+        const combined = [...histPoints, ...fcstPoints].filter((p) => Number.isFinite(p.total));
+
+        setHistory(histPoints);
+        setForecast(fcstPoints);
+        setTimeline(combined);
+
+        // ---- AI (now tracked with ETA) ----
+        setLoadingInsight(true);
+        const t1 = Date.now();
+        const ai = await explainForecast(
+          combined.map((p) => ({ date: p.date, value: p.total, source: p.source }))
+        ).catch(() => ({ summary: "" }));
+        updateAiEma(Date.now() - t1);
+        setLoadingInsight(false);
+
+        setSummary(ai.summary || "");
       } catch (err) {
         console.error("❌ Failed to load forecast:", err);
+        setHistory([]);
+        setForecast([]);
+        setTimeline([]);
+        setSummary("");
+        setLoadingForecast(false);
+        setLoadingInsight(false);
+        toast({ title: "Failed to load forecast", description: String(err), status: "error" });
       }
     };
     run();
-  }, [selectedStore]);
+  }, [selectedStore, toast]);
 
-  /* Ask AI for the broad summary (right panel).
-     If `focus` is passed, the backend will tailor the answer. */
-  const fetchAIInsight = async (timelineData, focus = null) => {
-    setLoadingInsight(true);
-    try {
-      const res = await fetch(`${BASE_URL}/api/explain_forecast`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timeline: timelineData, focus }),
-      });
-      const data = await res.json();
-      setSummary(data.summary || "No insight available.");
-    } catch (err) {
-      console.error("❌ AI Insight error:", err);
-      setSummary("Failed to fetch AI insight.");
-    } finally {
-      setLoadingInsight(false);
-    }
-  };
-
-  /* Point-and-explain click handler from the chart */
+  // Point-and-explain click handler from the chart
   const handlePointSelect = async (pt) => {
-    console.log("[Home] point selected:", pt);
     toast({
       title: "Point selected",
-      description: `${new Date(pt.date).toLocaleDateString()} • ${pt.source} • ${pt.value.toLocaleString()}`,
+      description: `${new Date(pt.date).toLocaleDateString()} • ${pt.source} • ${
+        pt.value?.toLocaleString?.() ?? pt.total
+      }`,
       status: "info",
-      duration: 1500,
+      duration: 1200,
       isClosable: true,
       position: "bottom-left",
     });
 
-    setFocusPoint(pt);
+    const focus = { date: pt.date, value: pt.value ?? pt.total, source: pt.source || "actual" };
+    setFocusPoint({ ...pt });
     setFocusLoading(true);
     setFocusSummary("Analyzing…");
     try {
-      const res = await fetch(`${BASE_URL}/api/explain_forecast`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ timeline, focus: pt }),
-      });
-      const data = await res.json();
-      setFocusSummary(data.summary || "No insight available.");
+      const ai = await explainForecast(
+        timeline.map((p) => ({ date: p.date, value: p.total, source: p.source })),
+        focus
+      );
+      setFocusSummary(ai.summary || "No insight available.");
     } catch (e) {
-      console.error("[Home] focused insight error:", e);
       setFocusSummary("Failed to fetch insight.");
     } finally {
       setFocusLoading(false);
@@ -310,20 +286,31 @@ export default function Home() {
       direction === "prev"
         ? (graphViewIndex - 1 + graphViews.length) % graphViews.length
         : (graphViewIndex + 1) % graphViews.length;
-
     setGraphViewIndex(next);
-    // keep right-panel AI in sync with current view (optional)
-    fetchAIInsight(timeline);
+    // keep right-panel AI aligned with current timeline
+    (async () => {
+      setLoadingInsight(true);
+      const t = Date.now();
+      try {
+        const ai = await explainForecast(
+          timeline.map((p) => ({ date: p.date, value: p.total, source: p.source }))
+        );
+        updateAiEma(Date.now() - t);
+        setSummary(ai.summary || "");
+      } finally {
+        setLoadingInsight(false);
+      }
+    })();
   };
 
-  /* Retry refresh if we were on cache and network failed */
+  // Retry refresh if cache was used
   const retryRefresh = async () => {
     setRefreshingStores(true);
     setStoresError("");
     const started = Date.now();
     try {
-      const stores = await fetchStores();
-      const list = Array.isArray(stores) ? stores : (stores?.stores || stores || []);
+      const stores = await fetchStores({ min_year: 2020, min_points: 5 });
+      const list = Array.isArray(stores) ? stores : stores?.stores || stores || [];
       setStoreList(list);
       localStorage.setItem(STORES_CACHE_KEY, JSON.stringify({ data: list, ts: Date.now() }));
     } catch (e) {
@@ -335,12 +322,9 @@ export default function Home() {
     }
   };
 
-  /* ---------------- Render ---------------- */
-
   return (
     <Container maxW="7xl" py={6}>
       <Grid templateColumns={{ base: "1fr", lg: "2fr 1fr" }} gap={6} alignItems="start">
-        {/* LEFT: selector + charts */}
         <GridItem>
           <Box mb={6}>
             {storesError && !usedCacheRef.current ? (
@@ -352,7 +336,7 @@ export default function Home() {
                 </Button>
               </Alert>
             ) : loadingStores ? (
-              <LoadingStoresCard etaMs={etaMs} />
+              <LoadingStoresCard etaMs={etaMs} label="Loading stores…" />
             ) : storeList.length === 0 ? (
               <Alert status="warning" borderRadius="lg">
                 <AlertIcon />
@@ -365,25 +349,37 @@ export default function Home() {
                   selectedStore={selectedStore}
                   setSelectedStore={setSelectedStore}
                 />
-
                 {storesError && usedCacheRef.current && (
                   <HStack mt={2} spacing={3}>
-                    <Text fontSize="sm" color="orange.700">{storesError}</Text>
-                    <Button size="xs" onClick={retryRefresh}>Retry refresh</Button>
+                    <Text fontSize="sm" color="orange.700">
+                      {storesError}
+                    </Text>
+                    <Button size="xs" onClick={retryRefresh}>
+                      Retry refresh
+                    </Button>
                   </HStack>
                 )}
-
-                {refreshingStores && <RefreshingBar etaMs={etaMs} />}
+                {/* Previously: {refreshingStores && <RefreshingBar etaMs={etaMs} />} */}
               </>
             )}
           </Box>
 
-          {/* Chart toggle */}
+          {/* NEW: Inline loaders for Forecast / AI */}
+          {loadingForecast ? (
+            <Box mb={4}>
+              <LoadingStoresCard label="Loading Forecast…" etaMs={etaForecast} />
+            </Box>
+          ) : loadingInsight ? (
+            <Box mb={4}>
+              <LoadingStoresCard label="Generating AI Insight…" etaMs={etaAi} />
+            </Box>
+          ) : null}
+
           <Flex justify="center" align="center" mb={3} gap={2}>
             <IconButton
               icon={<ArrowBackIcon />}
               onClick={() => handleGraphViewChange("prev")}
-              aria-label="Previous View"
+              aria-label="Prev"
               size="sm"
             />
             <Text fontWeight="bold" fontSize="lg">
@@ -394,58 +390,29 @@ export default function Home() {
             <IconButton
               icon={<ArrowForwardIcon />}
               onClick={() => handleGraphViewChange("next")}
-              aria-label="Next View"
+              aria-label="Next"
               size="sm"
             />
           </Flex>
 
-          {/* Chart area – single ForecastChart (no duplicates) */}
           <Box maxW="800px" mx="auto" position="relative" zIndex={0}>
             {graphViews[graphViewIndex] === "total" ? (
-              <>
-                {/* Debug helper: force-select first point */}
-                {timeline.length > 0 && (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    mb={2}
-                    onClick={() =>
-                      handlePointSelect({
-                        date: timeline[0].date,
-                        value:
-                          timeline[0].total ??
-                          timeline[0].total_sales ??
-                          timeline[0].sales ??
-                          timeline[0].value ??
-                          0,
-                        source: timeline[0].source || "history",
-                        cx: 100,
-                        cy: 100,
-                      })
-                    }
-                  >
-                    Debug: select first point
-                  </Button>
-                )}
-
-                <ForecastChart
-                  history={history}
-                  forecast={forecast}
-                  height={360}
-                  onPointSelect={handlePointSelect}
-                  focusPoint={focusPoint}
-                  focusSummary={focusSummary}
-                  focusLoading={focusLoading}
-                  onClosePopup={handleClosePopup}
-                />
-              </>
+              <ForecastChart
+                history={history}
+                forecast={forecast}
+                height={360}
+                onPointSelect={handlePointSelect}
+                focusPoint={focusPoint}
+                focusSummary={focusSummary}
+                focusLoading={focusLoading}
+                onClosePopup={handleClosePopup}
+              />
             ) : (
               <CategoryBreakdownChart history={history} />
             )}
           </Box>
         </GridItem>
 
-        {/* RIGHT: sticky AI panel */}
         <GridItem display={{ base: "none", lg: "block" }}>
           <Box w="720px" position="sticky" top="80px">
             <AIInsight
@@ -453,11 +420,13 @@ export default function Home() {
               loading={loadingInsight}
               boxProps={{ maxH: "90vh", overflowY: "auto" }}
             />
+            <Text mt={2} fontSize="xs" color="gray.500">
+              API: {API_BASE}
+            </Text>
           </Box>
         </GridItem>
       </Grid>
 
-      {/* Mobile AI Drawer */}
       <Button
         display={{ base: "inline-flex", lg: "none" }}
         position="fixed"

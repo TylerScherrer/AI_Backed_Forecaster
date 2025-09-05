@@ -1,6 +1,6 @@
 // src/sections/SalesGrowthCard.jsx (or wherever you render <ForecastChart/>)
 import React, { useMemo, useState } from "react";
-import ForecastChart from "../components/ForecastChart";
+import ForecastChart from "./ForecastChart";
 
 const API_BASE = process.env.REACT_APP_API_BASE || ""; // same-origin backend
 
