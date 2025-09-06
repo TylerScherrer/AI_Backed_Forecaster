@@ -62,7 +62,7 @@ jobs:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2A66DF7ACB594937BBFF43E6BB6E3376 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
-
+  
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
@@ -70,6 +70,7 @@ jobs:
           slot-name: Production
           package: My_App
           startup-command: >
-            gunicorn --chdir /home/site/wwwroot/backend run:app
+            gunicorn --chdir backend run:app
             --bind 0.0.0.0:8000 --timeout 600
             --access-logfile - --error-logfile - --log-level info
+
