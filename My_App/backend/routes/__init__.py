@@ -4,12 +4,13 @@ from .stores import store_bp
 from .forecast import forecast_bp
 from .explain_forecast import explain_bp
 from .data_access import _ensure_required_objects
-
+from .explain_category import category_ai_bp
 def register_routes(app):
     app.register_blueprint(homepage)
     app.register_blueprint(store_bp)
     app.register_blueprint(forecast_bp)
     app.register_blueprint(explain_bp)
+    app.register_blueprint(category_ai_bp)
 
     # NEW: pre-warm data/model one time at boot
     with app.app_context():

@@ -39,7 +39,7 @@ function LoadingStoresCard({ etaMs = 1500, label = "Loading stores…" }) {
       <Progress value={pct} size="sm" isAnimated hasStripe />
       <Text mt={2} fontSize="sm" color="gray.600">
         {label.toLowerCase().includes("forecast")
-          ? "First request after a cold start can take ~30–60s while the API warms and loads artifacts."
+          ? "First request after a cold start can take ~60–120s while the API warms and loads artifacts."
           : "Preparing store list. This depends on network speed."}
       </Text>
     </Box>
@@ -52,6 +52,9 @@ function LoadingStoresCard({ etaMs = 1500, label = "Loading stores…" }) {
 /* ---------------- Page ---------------- */
 export default function Home() {
   const toast = useToast();
+
+
+
 
   // Focus popup from chart
   const [focusPoint, setFocusPoint] = useState(null);
@@ -67,21 +70,33 @@ export default function Home() {
   const [history, setHistory] = useState([]);
   const [forecast, setForecast] = useState([]);
 
-  // AI (right panel)
+  // AI (right panel — total view)
   const [summary, setSummary] = useState("");
   const [loadingInsight, setLoadingInsight] = useState(false);
+
+  // AI (category view)
+  const [categoryInsight, setCategoryInsight] = useState("");
 
   // View toggle
   const graphViews = ["total", "category"];
   const [graphViewIndex, setGraphViewIndex] = useState(0);
   const drawer = useDisclosure();
 
+  // Decide what to show in the right panel
+  const isCategoryView = graphViews[graphViewIndex] === "category";
+  const insightText = isCategoryView ? categoryInsight : summary;
+  const insightLoading = isCategoryView
+    ? (!categoryInsight && history.length > 0)
+    : loadingInsight;
+
   // Loading UX for stores
   const [loadingStores, setLoadingStores] = useState(true);
   const [refreshingStores, setRefreshingStores] = useState(false);
   const [storesError, setStoresError] = useState("");
   const usedCacheRef = useRef(false);
-  const [etaMs, setEtaMs] = useState(Number(localStorage.getItem("storesLoadEMA")) || 1500);
+  const [etaMs, setEtaMs] = useState(
+    Number(localStorage.getItem("storesLoadEMA")) || 1500
+  );
 
   const STORES_CACHE_KEY = "storesCache:v3";
   const STORES_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -93,6 +108,7 @@ export default function Home() {
     localStorage.setItem(STORES_ETA_KEY, String(ema));
     setEtaMs(ema);
   };
+
 
   // NEW: Forecast/AI loaders with ETA (persisted EMA)
   const FORECAST_ETA_KEY = "forecastLoadEMA";
@@ -408,7 +424,13 @@ export default function Home() {
                 onClosePopup={handleClosePopup}
               />
             ) : (
-              <CategoryBreakdownChart history={history} />
+              <CategoryBreakdownChart
+                history={history}
+                storeId={Number(selectedStore?.value ?? selectedStore) || undefined}
+                apiBase={API_BASE}
+                onInsightText={setCategoryInsight}
+              />
+
             )}
           </Box>
         </GridItem>
@@ -416,10 +438,11 @@ export default function Home() {
         <GridItem display={{ base: "none", lg: "block" }}>
           <Box w="720px" position="sticky" top="80px">
             <AIInsight
-              summary={summary}
-              loading={loadingInsight}
+              summary={insightText}
+              loading={insightLoading}
               boxProps={{ maxH: "90vh", overflowY: "auto" }}
             />
+
             <Text mt={2} fontSize="xs" color="gray.500">
               API: {API_BASE}
             </Text>
@@ -442,7 +465,8 @@ export default function Home() {
         <DrawerContent>
           <DrawerHeader>AI Insight</DrawerHeader>
           <DrawerBody>
-            <AIInsight summary={summary} loading={loadingInsight} />
+            <AIInsight summary={insightText} loading={insightLoading} />
+
           </DrawerBody>
         </DrawerContent>
       </Drawer>
