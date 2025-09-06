@@ -30,19 +30,24 @@ jobs:
         run: |
           npm ci
           CI=false npm run build
-      - name: Deploy to Azure Static Web Apps
+
+      # ⬇️ Upload the already-built assets; don't let the action rebuild with Oryx
+      - name: Deploy to Azure Static Web Apps (upload prebuilt)
         uses: Azure/static-web-apps-deploy@v1
         with:
-          action: upload
-          app_location: My_App/frontend
-          output_location: build
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-
+          # Some releases expect 'deployment_action', some accept 'action'
+          deployment_action: upload
+          action: upload
+          skip_app_build: true
+          app_location: My_App/frontend
+          app_artifact_location: My_App/frontend/build
+          production_branch: main
 
   # --------------------------- BACKEND (Flask -> App Service) ---------------------------
   backend:
     runs-on: ubuntu-latest
-    needs: frontend   # optional; remove this line to deploy independently
+    needs: frontend   # remove if you want independent deploys
     permissions:
       id-token: write
       contents: read
@@ -54,12 +59,14 @@ jobs:
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2A66DF7ACB594937BBFF43E6BB6E3376 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
+          subscription-id: ${{ secretsA ZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
 
-      # Deploy the My_App folder so App Service sees requirements.txt at My_App/ and your code at My_App/backend
+      # Deploy the My_App folder so App Service sees requirements.txt at My_App/ and code at My_App/backend
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: AI-Powered-Forecaster
           slot-name: Production
           package: My_App
+          # Optional but recommended to keep startup consistent each deploy:
+          # startup-command: gunicorn --chdir /home/site/wwwroot/backend run:app --bind 0.0.0.0:8000 --timeout 600 --access-logfile - --error-logfile - --log-level info
