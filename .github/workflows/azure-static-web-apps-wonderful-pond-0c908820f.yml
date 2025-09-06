@@ -10,7 +10,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # -------------------------- FRONTEND (React -> SWA) --------------------------
   frontend:
     runs-on: ubuntu-latest
     permissions:
@@ -25,28 +24,28 @@ jobs:
           cache: npm
           cache-dependency-path: My_App/frontend/package-lock.json
 
-      - name: Install deps & build (CRA uses .env.production automatically)
+      - name: Install deps & build
         working-directory: My_App/frontend
         run: |
           npm ci
           CI=false npm run build
+
+      - name: Show built files (debug)
+        run: ls -lahR My_App/frontend/build || true
 
       - name: Deploy to Azure Static Web Apps (upload prebuilt build/)
         uses: Azure/static-web-apps-deploy@v1
         with:
           action: upload
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          # Source root (where the app's package.json lives)
           app_location: My_App/frontend
-          # Tell SWA where the *built* files are since we skipped Oryx build
           app_artifact_location: My_App/frontend/build
           skip_app_build: true
           production_branch: main
 
-  # --------------------------- BACKEND (Flask -> App Service) ---------------------------
   backend:
     runs-on: ubuntu-latest
-    needs: frontend   # optional; remove this line to deploy independently
+    needs: frontend
     permissions:
       id-token: write
       contents: read
@@ -60,7 +59,6 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
 
-      # Deploy the My_App folder so App Service sees requirements.txt at My_App/ and your code at My_App/backend
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
