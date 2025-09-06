@@ -38,13 +38,12 @@ jobs:
           npm ci
           CI=false npm run build
 
-      - name: Deploy to Azure Static Web Apps (upload built files; do NOT build with Oryx)
+      - name: Deploy to Azure Static Web Apps (upload prebuilt files)
         uses: Azure/static-web-apps-deploy@v1
         with:
-          # Keep app_location at the project root and point output_location at the built folder
-          app_location: My_App/frontend
-          output_location: build
-          skip_app_build: true          # <- this stops Oryx from rebuilding
+          action: upload                    # <- REQUIRED to avoid "deployment_action was not provided"
+          app_location: My_App/frontend/build  # <- point to the built assets
+          skip_app_build: true               # <- belt & suspenders: don't let Oryx rebuild
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
 
   # --------------------------- BACKEND (Flask -> App Service) ---------------------------
@@ -73,7 +72,7 @@ jobs:
           slot-name: Production
           package: My_App
           # If you don't already have a Startup Command set in App Service, keep this:
-          startup-command: >
-            gunicorn --chdir /home/site/wwwroot backend.run:app
-            --bind 0.0.0.0:$PORT --timeout 600
-            --access-logfile - --error-logfile - --log-level info
+          # startup-command: >
+          #   gunicorn --chdir /home/site/wwwroot backend.run:app
+          #   --bind 0.0.0.0:$PORT --timeout 600
+          #   --access-logfile - --error-logfile - --log-level info
