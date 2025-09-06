@@ -23,7 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Push runs use the exact commit; manual runs use the chosen ref
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
 
       - name: Use Node.js 20
@@ -33,18 +32,19 @@ jobs:
           cache: npm
           cache-dependency-path: My_App/frontend/package-lock.json
 
-      - name: Install deps & build
+      - name: Install deps & build (CRA)
         working-directory: My_App/frontend
         run: |
           npm ci
           CI=false npm run build
 
-      - name: Deploy to Azure Static Web Apps
+      - name: Deploy to Azure Static Web Apps (upload built files; do NOT build with Oryx)
         uses: Azure/static-web-apps-deploy@v1
         with:
-          action: upload
+          # Keep app_location at the project root and point output_location at the built folder
           app_location: My_App/frontend
           output_location: build
+          skip_app_build: true          # <- this stops Oryx from rebuilding
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
 
   # --------------------------- BACKEND (Flask -> App Service) ---------------------------
@@ -57,7 +57,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Match the frontend ref (push SHA or manual input)
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
 
       - name: Azure login (OIDC)
@@ -73,10 +72,7 @@ jobs:
           app-name: AI-Powered-Forecaster
           slot-name: Production
           package: My_App
-          # Stable startup (no fragile --pythonpath); matches your repo layout:
-          #   My_App/
-          #     backend/run.py  -> exposes `app`
-          #     requirements.txt (at My_App/)
+          # If you don't already have a Startup Command set in App Service, keep this:
           startup-command: >
             gunicorn --chdir /home/site/wwwroot backend.run:app
             --bind 0.0.0.0:$PORT --timeout 600
