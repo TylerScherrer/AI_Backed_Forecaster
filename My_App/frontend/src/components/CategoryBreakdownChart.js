@@ -1,5 +1,5 @@
 // src/components/CategoryBreakdownChart.js
-import React, { useMemo, useEffect } from "react";
+import React, { useMemo, useEffect, useState } from "react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -22,9 +22,7 @@ const fmtUSD = (n) =>
 
 const toYYYYMM = (d) => {
   const x = new Date(d);
-  return isNaN(x)
-    ? String(d)
-    : `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`;
+  return isNaN(x) ? String(d) : `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`;
 };
 
 // Make labels readable: "AMERICAN_CORDIALS_LIQUEURS" -> "American Cordials & Liqueurs"
@@ -43,31 +41,35 @@ export default function CategoryBreakdownChart({
   topN = 12,
   apiBase = process.env.REACT_APP_API_BASE || "/api",
   onInsightText,
-  storeId, // optional; forwarded to backend
+  storeId,
 }) {
-  // Build dataset from the latest month that actually has a categories object
+  // 1) Build a list of months (ascending) that actually have categories
+  const months = useMemo(() => {
+    const rows = (Array.isArray(history) ? history : [])
+      .filter((r) => r?.categories && Object.keys(r.categories).length)
+      .map((r) => ({ ...r, key: toYYYYMM(r.date) }))
+      .sort((a, b) => String(a.key).localeCompare(String(b.key)));
+
+    // If multiple entries for same YYYY-MM, keep the last one
+    const byKey = new Map();
+    for (const r of rows) byKey.set(r.key, r);
+    return Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
+  }, [history]);
+
+  // 2) Local month index state (reset to latest whenever months change)
+  const [monthIdx, setMonthIdx] = useState(Math.max(0, months.length - 1));
+  useEffect(() => {
+    setMonthIdx(Math.max(0, months.length - 1));
+  }, [months.length]);
+
+  const selected = months[monthIdx] || null;
+
+  // 3) From the selected month, build chart data + AI payload
   const { latestLabel, monthKey, data, payloadForAI } = useMemo(() => {
-    const rows = Array.isArray(history) ? [...history] : [];
-    rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    if (!selected) return { latestLabel: "", monthKey: "", data: [], payloadForAI: null };
 
-    // Find latest and previous rows with categories
-    let latest = null;
-    let prev = null;
-    for (let i = rows.length - 1; i >= 0; i--) {
-      if (rows[i]?.categories && Object.keys(rows[i].categories).length) {
-        if (!latest) latest = rows[i];
-        else {
-          prev = rows[i];
-          break;
-        }
-      }
-    }
-    if (!latest)
-      return { latestLabel: "", monthKey: "", data: [], payloadForAI: null };
-
-    // Latest categories (drop "Total")
-    const latestEntries = Object.entries(latest.categories || {})
-      .filter(([name]) => !/^total$/i.test(name))
+    const entries = Object.entries(selected.categories || {})
+      .filter(([name]) => !/^total$/i.test(name)) // drop “Total”
       .map(([name, val]) => ({
         name,
         label: tidyLabel(name),
@@ -75,63 +77,44 @@ export default function CategoryBreakdownChart({
       }))
       .filter((d) => Number.isFinite(d.value));
 
-    // Month sum and shares
-    const monthSum =
-      latestEntries.reduce((s, r) => s + (r.value || 0), 0) || 0;
+    entries.sort((a, b) => b.value - a.value);
+    const top = entries.slice(0, Math.max(1, topN));
+    const rest = entries.slice(Math.max(1, topN));
 
-    // Sort desc and keep Top N + Other
-    latestEntries.sort((a, b) => b.value - a.value);
-    const top = latestEntries.slice(0, Math.max(1, topN));
-    const rest = latestEntries.slice(Math.max(1, topN));
     let otherSum = 0;
     if (rest.length) {
       otherSum = rest.reduce((s, r) => s + (r.value || 0), 0);
       top.push({ name: "__OTHER__", label: "Other", value: otherSum });
     }
-    const withShare = top.map((d) => ({
-      ...d,
-      share: monthSum ? d.value / monthSum : 0,
-    }));
-
-    // Previous month (filtered like latest)
-    let prevEntries = null;
-    if (prev?.categories) {
-      prevEntries = Object.entries(prev.categories || {})
-        .filter(([name]) => !/^total$/i.test(name))
-        .map(([name, val]) => ({ name, value: Number(val) || 0 }))
-        .filter((d) => Number.isFinite(d.value));
-    }
 
     const label =
-      new Date(latest.date).toLocaleDateString(undefined, {
+      new Date(selected.date).toLocaleDateString(undefined, {
         month: "short",
         year: "numeric",
-      }) || String(latest.date);
+      }) || String(selected.date);
 
-    const payloadForAI = {
+    const grandTotal = entries.reduce((s, r) => s + (r.value || 0), 0);
+    const payload = {
       store_id: storeId,
-      month: toYYYYMM(latest.date),
+      month: toYYYYMM(selected.date),
       top_n: topN,
       totals: {
-        grand_total: monthSum,
-        top_total: withShare
-          .filter((d) => d.name !== "__OTHER__")
-          .reduce((s, r) => s + r.value, 0),
+        grand_total: grandTotal,
+        top_total: top.filter((d) => d.name !== "__OTHER__").reduce((s, r) => s + r.value, 0),
         other_total: otherSum,
       },
-      categories: latestEntries.map((e) => ({ name: e.name, value: e.value })),
-      prev_categories: prevEntries, // may be null
+      categories: entries.map((e) => ({ name: e.name, value: e.value })),
     };
 
     return {
       latestLabel: label,
-      monthKey: toYYYYMM(latest.date),
-      data: withShare,
-      payloadForAI,
+      monthKey: toYYYYMM(selected.date),
+      data: top,
+      payloadForAI: payload,
     };
-  }, [history, topN, storeId]);
+  }, [selected, topN, storeId]);
 
-  // Ask backend for category-specific AI insight (with graceful fallback)
+  // 4) Ask backend for month-specific category insight; fallback if unavailable
   useEffect(() => {
     if (!onInsightText || !payloadForAI) return;
     const controller = new AbortController();
@@ -145,63 +128,33 @@ export default function CategoryBreakdownChart({
           signal: controller.signal,
         });
         const j = await res.json().catch(() => ({}));
-        const text =
-          j?.text || j?.summary || j?.insight || j?.message || "";
-        if (text) {
-          onInsightText(text);
+        if (j?.text) {
+          onInsightText(j.text);
           return;
         }
       } catch {
-        /* ignore and fall back */
+        // ignore and use fallback
       }
 
-      // Fallback summary (no backend / error)
-      const cats = payloadForAI.categories || [];
-      const total = payloadForAI.totals?.grand_total || 0;
-      const top3 = [...cats].sort((a, b) => b.value - a.value).slice(0, 3);
-      const top3Share =
-        total ? (top3.reduce((s, d) => s + d.value, 0) / total) * 100 : 0;
-
-      // Simple MoM mover if prev exists
-      let moverLine = null;
-      if (payloadForAI.prev_categories?.length) {
-        const prevMap = new Map(
-          payloadForAI.prev_categories.map((p) => [p.name, p.value])
-        );
-        let best = { name: null, delta: 0 };
-        for (const c of cats) {
-          const d = c.value - (prevMap.get(c.name) || 0);
-          if (Math.abs(d) > Math.abs(best.delta)) best = { name: c.name, delta: d };
-        }
-        if (best.name) {
-          const pct = total ? Math.round((Math.abs(best.delta) / total) * 1000) / 10 : 0;
-          moverLine = `Biggest mover vs prior month: ${tidyLabel(
-            best.name
-          )} ${best.delta >= 0 ? "up" : "down"} ${fmtUSD(
-            Math.abs(best.delta)
-          )} (~${pct}%).`;
-        }
-      }
-
+      const total = payloadForAI.totals.grand_total || 0;
+      const top3 = [...payloadForAI.categories].sort((a, b) => b.value - a.value).slice(0, 3);
       const bullets = [
         `Category breakdown for ${monthKey}.`,
         ...top3.map(
           (c, i) =>
             `${i + 1}. ${tidyLabel(c.name)}: ${fmtUSD(c.value)} (${
-              total ? ((c.value / total) * 100).toFixed(1) : "0.0"
-            }%).`
+              total ? ((c.value / total) * 100).toFixed(1) : "0"
+            }%)`
         ),
-        `Concentration: top 3 = ${top3Share.toFixed(1)}% of category sales.`,
-        moverLine,
         `Total across categories: ${fmtUSD(total)}.`,
-      ].filter(Boolean);
-
+      ];
       onInsightText(bullets.join("\n"));
     })();
 
     return () => controller.abort();
   }, [apiBase, monthKey, onInsightText, payloadForAI]);
 
+  // 5) Empty-state
   if (!data.length) {
     return (
       <div
@@ -216,10 +169,14 @@ export default function CategoryBreakdownChart({
           background: "white",
         }}
       >
-        No category data available for the latest month.
+        No category data available.
       </div>
     );
   }
+
+  // 6) Header with Prev/Next month controls
+  const canPrev = monthIdx > 0;
+  const canNext = monthIdx < months.length - 1;
 
   return (
     <div
@@ -233,19 +190,56 @@ export default function CategoryBreakdownChart({
     >
       <div
         style={{
-          fontWeight: 600,
-          fontSize: 14,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
           margin: "6px 10px 2px",
           color: "#334155",
         }}
       >
-        Category Breakdown • {latestLabel}
+        <button
+          aria-label="Previous month"
+          onClick={() => canPrev && setMonthIdx((i) => Math.max(0, i - 1))}
+          disabled={!canPrev}
+          style={{
+            border: "1px solid #CBD5E1",
+            borderRadius: 8,
+            padding: "2px 6px",
+            background: canPrev ? "#fff" : "#f8fafc",
+            opacity: canPrev ? 1 : 0.5,
+            cursor: canPrev ? "pointer" : "default",
+          }}
+        >
+          ‹
+        </button>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>Category Breakdown</div>
+        <button
+          aria-label="Next month"
+          onClick={() =>
+            canNext && setMonthIdx((i) => Math.min(months.length - 1, i + 1))
+          }
+          disabled={!canNext}
+          style={{
+            border: "1px solid #CBD5E1",
+            borderRadius: 8,
+            padding: "2px 6px",
+            background: canNext ? "#fff" : "#f8fafc",
+            opacity: canNext ? 1 : 0.5,
+            cursor: canNext ? "pointer" : "default",
+          }}
+        >
+          ›
+        </button>
+        <div style={{ marginLeft: 8, fontSize: 14, fontWeight: 600 }}>
+          • {latestLabel}
+        </div>
       </div>
+
       <ResponsiveContainer width="100%" height={height - 40}>
         <BarChart
           data={data}
           layout="vertical"
-          margin={{ top: 8, right: 16, bottom: 8, left: 140 }}
+          margin={{ top: 8, right: 16, bottom: 8, left: 120 }}
         >
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis
@@ -257,28 +251,20 @@ export default function CategoryBreakdownChart({
           <YAxis
             type="category"
             dataKey="label"
-            width={140}
+            width={120}
             tick={{ fontSize: 12 }}
           />
           <Tooltip
-            formatter={(v, _n, payload) => {
-              const pct = payload?.payload?.share
-                ? ` (${(payload.payload.share * 100).toFixed(1)}%)`
-                : "";
-              return [`${fmtUSD(v)}${pct}`, "Sales"];
-            }}
+            formatter={(v) => [fmtUSD(v), "Sales"]}
             cursor={{ fill: "rgba(148, 163, 184, 0.12)" }}
           />
           <Bar dataKey="value" fill="#3182ce" radius={[4, 4, 4, 4]}>
             <LabelList
               dataKey="value"
               position="right"
-              formatter={(v, _name, payload) => {
-                const pct = payload?.share
-                  ? ` • ${(payload.share * 100).toFixed(1)}%`
-                  : "";
-                return `${v.toLocaleString()}${pct}`;
-              }}
+              formatter={(v) =>
+                typeof v === "number" ? v.toLocaleString() : v
+              }
               style={{ fontSize: 12, fill: "#1e293b" }}
             />
           </Bar>
