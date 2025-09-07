@@ -52,7 +52,13 @@ export function useStores() {
       setStoresError("");
       const t0 = Date.now();
       try {
-        const stores = await fetchStores({ min_year: 2020, min_points: 5 });
+        
+        const stores = await fetchStores({
+        min_year: 2023,            // optional, but sensible with your dataset
+        min_points: 1,             // optional: if you only need Aug present, 1 is enough
+        must_have_month: "2023-08" // <- only stores with August 2023 data
+        });
+
         const list = Array.isArray(stores) ? stores : stores?.stores || stores || [];
         if (!cancelled) {
           setStoreList(list);

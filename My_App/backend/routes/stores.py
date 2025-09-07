@@ -134,10 +134,12 @@ def get_stores():
     Fast store list:
       • If model features exist → single batched prediction (very fast).
       • If features missing → graceful fallback to a naïve latest numeric value (never 500).
-    Query:
-      - min_year  (int, default 2020)
-      - min_points(int, default 5)
-      - limit     (int, optional)
+
+    Query params:
+      - min_year         (int, default 2020)
+      - min_points       (int, default 5)  # distinct months required
+      - limit            (int, optional)
+      - must_have_month  (str 'YYYY-MM', optional)  # e.g. '2023-08'
     """
     logger: logging.Logger = current_app.logger
     t0 = time.time()
@@ -153,28 +155,53 @@ def get_stores():
         min_year = request.args.get("min_year", default=2020, type=int)
         min_points = request.args.get("min_points", default=5, type=int)
         limit = request.args.get("limit", type=int)
+        must_have_month = request.args.get("must_have_month")  # 'YYYY-MM' or None
 
         # 3) Normalize columns + Date
         df = _ensure_core_columns(df)
+        # Build YearMonth once so we can probe specific months
+        df["YearMonth"] = df["Date"].dt.to_period("M").dt.to_timestamp()
 
-        # Cache key
+        # 4) Cache key (include must_have_month so results don't collide)
         df_id = id(df)
         df_version = getattr(df, "version", (df.shape, tuple(df.columns)))
         feature_sig = tuple(features)
-        cache_key = (min_year, min_points, limit, df_id, df_version, feature_sig)
+        cache_key = (min_year, min_points, limit, must_have_month, df_id, df_version, feature_sig)
 
         now = time.time()
         hit = _STORES_CACHE.get(cache_key)
         if hit and (now - hit[0] < _CACHE_TTL_SEC):
             return jsonify(hit[1]), 200
 
-        # 4) Filter by year
+        # 5) Base year filter
         df2 = df[df["Date"].dt.year >= min_year]
         if df2.empty:
             _STORES_CACHE[cache_key] = (now, [])
             return jsonify([]), 200
 
-        # 5) Require min distinct months per store
+        # 6) Optional: keep only stores that have the specific month (e.g., '2023-08')
+        if must_have_month:
+            try:
+                month_start = pd.to_datetime(must_have_month + "-01", errors="raise")
+            except Exception:
+                # invalid format → return empty politely
+                _STORES_CACHE[cache_key] = (now, [])
+                return jsonify([]), 200
+
+            valid_ids = set(
+                df.loc[df["YearMonth"] == month_start, "store_id"].astype("int64").unique().tolist()
+            )
+            if not valid_ids:
+                _STORES_CACHE[cache_key] = (now, [])
+                return jsonify([]), 200
+
+            # Keep all rows for those stores (so we can compute latest row, distinct months, etc.)
+            df2 = df2[df2["store_id"].isin(valid_ids)]
+            if df2.empty:
+                _STORES_CACHE[cache_key] = (now, [])
+                return jsonify([]), 200
+
+        # 7) Require min distinct months per store
         months_per_store = (
             df2.assign(_m=df2["Date"].dt.to_period("M"))
                .groupby("store_id")["_m"]
@@ -184,14 +211,12 @@ def get_stores():
         if not ok_store_ids:
             _STORES_CACHE[cache_key] = (now, [])
             return jsonify([]), 200
-
         df2 = df2[df2["store_id"].isin(ok_store_ids)]
 
-        # 6) Latest row per store
+        # 8) Latest row per store → label building
         idx = df2.groupby("store_id")["Date"].idxmax()
         latest_rows = df2.loc[idx].copy()
 
-        # 7) Human labels
         def make_label(row: pd.Series) -> str:
             sid = _safe_store_value(row["store_id"])
             city = str(row.get("city", "")).strip() if "city" in row else ""
@@ -204,7 +229,7 @@ def get_stores():
 
         latest_rows["__label"] = latest_rows.apply(make_label, axis=1)
 
-        # 8) If any model features missing → naïve fallback (NO ERROR)
+        # 9) Feature check
         missing = [f for f in features if f not in latest_rows.columns]
         if missing:
             logger.warning(
@@ -217,13 +242,12 @@ def get_stores():
                 latest_rows = latest_rows.head(limit)
 
             out = []
-            # iterate as Series so we can access '__label' safely
             for _, r in latest_rows.iterrows():
                 preview = _pick_latest_numeric_row(r)
                 out.append({
                     "value": _safe_store_value(r["store_id"]),
                     "label": r["__label"],
-                    "forecast": preview  # may be None; UI can handle/null-coalesce
+                    "forecast": preview  # may be None
                 })
 
             _STORES_CACHE[cache_key] = (now, out)
@@ -231,7 +255,7 @@ def get_stores():
                         len(out), (time.time() - t0) * 1000)
             return jsonify(out), 200
 
-        # 9) Model path: drop NaNs in required features, optional limit, single predict
+        # 10) Model path
         latest_rows = latest_rows.dropna(subset=features)
         if latest_rows.empty:
             _STORES_CACHE[cache_key] = (now, [])
@@ -241,8 +265,6 @@ def get_stores():
             latest_rows = latest_rows.head(limit)
 
         preds = _batch_predict(model, latest_rows, features)
-
-        # Build lists directly from DF to avoid attribute issues
         ids = latest_rows["store_id"].tolist()
         labels = latest_rows["__label"].tolist()
 
