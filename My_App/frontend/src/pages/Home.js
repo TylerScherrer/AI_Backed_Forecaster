@@ -1,5 +1,5 @@
 // src/pages/Home.js
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Container,
@@ -20,7 +20,9 @@ import {
   useToast,
 } from "@chakra-ui/react";
 import { ArrowBackIcon, ArrowForwardIcon } from "@chakra-ui/icons";
+
 import { API_BASE } from "../api/base";
+import { explainForecast } from "../api/forecastService";
 
 import { useStores } from "../hooks/useStores";
 import { useForecast } from "../hooks/useForecast";
@@ -35,7 +37,7 @@ export default function Home() {
   const toast = useToast();
   const drawer = useDisclosure();
 
-  // Stores
+  // ---------------- Stores ----------------
   const {
     storeList,
     loadingStores,
@@ -47,13 +49,13 @@ export default function Home() {
 
   const [selectedStore, setSelectedStore] = useState(null);
 
-  // Forecast & total insight
+  // ---------------- Forecast + total-page insight ----------------
   const {
     history,
     forecast,
     timeline,
     summary,
-    setSummary,
+    setSummary, // exposed by hook; we only set if you want manual overrides
     loadingForecast,
     loadingInsight,
     etaForecast,
@@ -67,45 +69,73 @@ export default function Home() {
       }),
   });
 
-  // Category insight (right panel when viewing categories)
+  // ---------------- Category insight (right panel when viewing Category tab) ----------------
   const [categoryInsight, setCategoryInsight] = useState("");
 
-  // Focus popup for ForecastChart
+  // ---------------- Chart point popup (Forecast tab) ----------------
   const [focusPoint, setFocusPoint] = useState(null);
   const [focusLoading, setFocusLoading] = useState(false);
   const [focusSummary, setFocusSummary] = useState("");
+  const pointReqRef = useRef(0); // guards against stale async writes
 
+  // ---------------- View toggle ----------------
   const graphViews = ["total", "category"];
   const [graphViewIndex, setGraphViewIndex] = useState(0);
   const isCategoryView = graphViews[graphViewIndex] === "category";
   const insightText = isCategoryView ? categoryInsight : summary;
-  const insightIsLoading = isCategoryView ? (!categoryInsight && history.length > 0) : loadingInsight;
+  const insightIsLoading = isCategoryView
+    ? !categoryInsight && history.length > 0
+    : loadingInsight;
 
-  // Clear category insight when store changes or view toggles
+  // Clear category insight whenever store or tab changes (prevents stale text)
   useEffect(() => {
     setCategoryInsight("");
   }, [selectedStore, graphViewIndex]);
 
-  // Toggle views (no re-fetch to avoid loops)
   const handleGraphViewChange = (direction) => {
     const next =
       direction === "prev"
         ? (graphViewIndex - 1 + graphViews.length) % graphViews.length
         : (graphViewIndex + 1) % graphViews.length;
     setGraphViewIndex(next);
-    // Keep previous total summary; do not re-fetch here.
+    // Don't force a re-fetch here; the hook already fetched 'summary'.
   };
 
-  // Point click handler (keep simple to avoid extra network calls)
-  const handlePointSelect = (pt) => {
+  // Point click: fetch point-specific AI explanation (safe against race conditions)
+  const handlePointSelect = async (pt) => {
+    const focus = {
+      date: pt.date,
+      value: pt.value ?? pt.total,
+      source: pt.source || "actual",
+    };
+
+    const reqId = ++pointReqRef.current;
+
     setFocusPoint({ ...pt });
     setFocusLoading(true);
-    setFocusSummary(
-      `${new Date(pt.date).toLocaleDateString()} • ${pt.source} • ${pt.value?.toLocaleString?.() ?? pt.total}`
-    );
-    setTimeout(() => setFocusLoading(false), 300);
+    setFocusSummary("Analyzing…");
+
+    try {
+      const series = timeline.map((p) => ({
+        date: p.date,
+        value: p.total,
+        source: p.source,
+      }));
+
+      const ai = await explainForecast(series, focus);
+
+      if (reqId !== pointReqRef.current) return; // ignore stale response
+      setFocusSummary(ai?.summary || "No insight available.");
+    } catch {
+      if (reqId !== pointReqRef.current) return;
+      setFocusSummary("Failed to fetch insight.");
+    } finally {
+      if (reqId === pointReqRef.current) setFocusLoading(false);
+    }
   };
+
   const handleClosePopup = () => {
+    pointReqRef.current++; // cancel any in-flight point request
     setFocusPoint(null);
     setFocusSummary("");
     setFocusLoading(false);
@@ -117,7 +147,7 @@ export default function Home() {
   return (
     <Container maxW="7xl" py={6}>
       <Grid templateColumns={{ base: "1fr", lg: "2fr 1fr" }} gap={6} alignItems="start">
-        {/* Left Column */}
+        {/* ---------------- Left column ---------------- */}
         <GridItem>
           <Box mb={6}>
             {storesError && !usedCacheRef.current ? (
@@ -170,8 +200,17 @@ export default function Home() {
             </Box>
           ) : null}
 
-          {/* Chart Card */}
-          <Box maxW="800px" mx="auto" position="relative" zIndex={0} p={2} borderWidth="1px" borderRadius="xl" bg="white">
+          {/* Chart card */}
+          <Box
+            maxW="800px"
+            mx="auto"
+            position="relative"
+            zIndex={0}
+            p={2}
+            borderWidth="1px"
+            borderRadius="xl"
+            bg="white"
+          >
             <HStack justify="space-between" mb={2}>
               <Text fontWeight="bold">{chartTitle}</Text>
               <HStack spacing={1}>
@@ -215,7 +254,7 @@ export default function Home() {
           </Box>
         </GridItem>
 
-        {/* Right Column (AI panel) */}
+        {/* ---------------- Right column (AI panel) ---------------- */}
         <GridItem display={{ base: "none", lg: "block" }}>
           <Box w="720px" position="sticky" top="80px" p={4} borderWidth="1px" borderRadius="xl" bg="white">
             <Text fontWeight="bold" mb={2}>AI Insight</Text>
@@ -231,7 +270,7 @@ export default function Home() {
         </GridItem>
       </Grid>
 
-      {/* Mobile drawer */}
+      {/* ---------------- Mobile drawer ---------------- */}
       <Button
         display={{ base: "inline-flex", lg: "none" }}
         position="fixed"
