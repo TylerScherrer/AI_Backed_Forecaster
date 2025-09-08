@@ -1,0 +1,69 @@
+name: Deploy Frontend (SWA) + Backend (App Service)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-all
+  cancel-in-progress: false
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: My_App/frontend/package-lock.json
+      - name: Build frontend
+        working-directory: My_App/frontend
+        run: |
+          npm ci
+          CI=false npm run build
+      - name: Verify build output
+        run: |
+          ls -lah My_App/frontend/build
+          test -f My_App/frontend/build/index.html
+      - name: Deploy to Azure Static Web Apps (prebuilt build/)
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          action: upload
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          app_location: My_App/frontend/build
+          skip_app_build: true
+          production_branch: main
+
+  backend:
+    runs-on: ubuntu-latest
+    needs: frontend
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      APP_NAME: AI-Powered-Forecaster
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_2A66DF7ACB594937BBFF43E6BB6E3376 }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6F4AD8E7077C4CE2B5B8F4E7EB2CC8C4 }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_8B5E3BBA930A4D3AA14787A960622DA8 }}
+
+      # Deploy ONLY the backend folder; the action zips it for you.
+      - name: Deploy backend (Zip Deploy)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.APP_NAME }}
+          slot-name: Production
+          package: My_App/backend
+          startup-command: >
+            gunicorn run:app
+            --bind 0.0.0.0:8000 --timeout 600
+            --access-logfile - --error-logfile - --log-level info
