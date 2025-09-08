@@ -4,6 +4,38 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, LabelList,
 } from "recharts";
 
+/* ---------------- baseline filtering ---------------- */
+// normalize any name: lowercase, underscores/dashes -> spaces, collapse spaces
+function normalizeName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// drop synthetic baselines like "Store Mean Sales", "Store Std Sales" in any variant
+function keepCategory(name) {
+  const norm = normalizeName(name);
+  // catch common variants
+  if (
+    norm.startsWith("store mean") ||
+    norm.startsWith("store average") ||
+    norm.startsWith("store avg") ||
+    norm.startsWith("store std") ||
+    norm.startsWith("store standard") ||
+    norm.startsWith("store standard deviation")
+  ) {
+    return false;
+  }
+  // also block exact "mean sales" / "std sales" if prefixed implicitly by store in your feed
+  if (norm === "mean sales" || norm === "std sales" || norm === "standard sales") {
+    return false;
+  }
+  return true;
+}
+/* ---------------------------------------------------- */
+
 const fmtUSD = (n) =>
   typeof n === "number"
     ? n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 })
@@ -54,8 +86,13 @@ export default function CategoryBreakdownChart({
     if (!selected) return { latestLabel: "", monthKey: "", data: [], payloadForAI: null };
 
     const entries = Object.entries(selected.categories || {})
-      .filter(([name]) => !/^total$/i.test(name))
-      .map(([name, val]) => ({ name, label: tidyLabel(name), value: Number(val) || 0 }))
+      .filter(([name]) => !/^total$/i.test(name))         // keep non-total rows
+      .filter(([name]) => keepCategory(name))             // ⬅️ drop baselines (mean/std/etc.)
+      .map(([name, val]) => ({
+        name,
+        label: tidyLabel(name),
+        value: Number(val) || 0
+      }))
       .filter((d) => Number.isFinite(d.value))
       .sort((a, b) => b.value - a.value);
 
@@ -78,6 +115,7 @@ export default function CategoryBreakdownChart({
         top_total: top.filter((d) => d.name !== "__OTHER__").reduce((s, r) => s + r.value, 0),
         other_total: otherSum,
       },
+      // Use the filtered entries for AI as well (baselines are gone here too)
       categories: entries.map((e) => ({ name: e.name, value: e.value })),
     };
 
@@ -130,8 +168,7 @@ export default function CategoryBreakdownChart({
       cancelled = true;
       controller.abort();
     };
-    // Critically: depend only on primitives that define the request identity
-  }, [apiBase, storeId, monthKey]); // DO NOT include payloadForAI or onInsightText
+  }, [apiBase, storeId, monthKey]); // keep the request identity tight
 
   if (!data.length) {
     return (
@@ -185,7 +222,9 @@ export default function CategoryBreakdownChart({
           <YAxis type="category" dataKey="label" width={120} tick={{ fontSize: 12 }} />
           <Tooltip formatter={(v) => [fmtUSD(v), "Sales"]} cursor={{ fill: "rgba(148, 163, 184, 0.12)" }} />
           <Bar dataKey="value" fill="#3182ce" radius={[4, 4, 4, 4]}>
-            <LabelList dataKey="value" position="right"
+            <LabelList
+              dataKey="value"
+              position="right"
               formatter={(v) => (typeof v === "number" ? v.toLocaleString() : v)}
               style={{ fontSize: 12, fill: "#1e293b" }}
             />
@@ -198,10 +237,14 @@ export default function CategoryBreakdownChart({
 
 function buildFallback(payloadForAI, monthKey) {
   const total = payloadForAI?.totals?.grand_total || 0;
-  const top3 = [...(payloadForAI?.categories || [])].sort((a, b) => b.value - a.value).slice(0, 3);
+  const top3 = [...(payloadForAI?.categories || [])]
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 3);
   const bullets = [
     `Category breakdown for ${monthKey}.`,
-    ...top3.map((c, i) => `${i + 1}. ${tidyLabel(c.name)}: ${fmtUSD(c.value)} (${total ? ((c.value / total) * 100).toFixed(1) : "0"}%)`),
+    ...top3.map((c, i) =>
+      `${i + 1}. ${tidyLabel(c.name)}: ${fmtUSD(c.value)} (${total ? ((c.value / total) * 100).toFixed(1) : "0"}%)`
+    ),
     `Total across categories: ${fmtUSD(total)}.`,
   ];
   return bullets.join("\n");

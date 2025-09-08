@@ -1,53 +1,44 @@
-/* --- Base canvas and subtle background --- */
-html, body, #root {
-  height: 100%;
-  background: #f7fafc; /* light gray, matches Chakra's gray.50 */
-}
-
-/* --- Dashboard grid scaffold --- */
+/* ---- Dashboard layout ---- */
 .dashboard-grid {
-  /* 320px left card, flexible middle, 360–380px right panel */
   display: grid;
-  grid-template-columns: 320px 1fr 380px;
-  gap: 24px;               /* space between columns */
-  align-items: start;      /* keep everything top-aligned */
-}
-
-/* Top row: store card + KPI, spanning the first two columns */
-.dashboard-top {
-  grid-column: 1 / span 2;
-  display: grid;
-  grid-template-columns: 320px 1fr;  /* store card fixed, KPI flexible */
   gap: 24px;
+  grid-template-columns: 1fr;      /* mobile: single column */
+  align-items: start;
 }
 
-/* Chart must start left and sit directly under the top row */
-.dashboard-chart {
-  grid-column: 1 / span 2;           /* under the top row, left-aligned */
-}
-
-/* Right-side AI panel */
-.dashboard-right {
-  grid-column: 3;
-  position: sticky;
-  top: 56px;                          /* keeps it in view on scroll */
-}
-
-/* --- Responsive collapse --- */
-@media (max-width: 1280px) {
+/* desktop: content + sticky right panel */
+@media (min-width: 1024px) {
   .dashboard-grid {
-    grid-template-columns: 1fr;       /* single column on smaller screens */
+    grid-template-columns: minmax(0, 1fr) 360px; /* left content | right AI */
   }
+}
+
+/* left content (store+forecast on top, chart below) */
+.dashboard-top {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1fr;       /* mobile: stack */
+}
+
+/* tablet+: two cards in the top row (store | forecast) */
+@media (min-width: 768px) {
   .dashboard-top {
-    grid-column: auto;
-    grid-template-columns: 1fr;       /* stack store card and KPI */
+    grid-template-columns: 1fr 1fr; /* Select a Store | Forecast KPI */
   }
-  .dashboard-chart {
-    grid-column: auto;                /* full width */
-  }
-  .dashboard-right {
-    grid-column: auto;
-    position: static;                 /* no sticky on small screens */
-    margin-top: 12px;
-  }
+}
+
+/* the chart should live under the top row */
+.dashboard-chart {
+  /* nothing needed; it naturally sits below .dashboard-top in the left column */
+}
+
+/* sticky AI panel on the right */
+.dashboard-right {
+  position: sticky;
+  top: 24px;
+}
+
+/* optional: softer page bg */
+body {
+  background: #f7f9fc;
 }

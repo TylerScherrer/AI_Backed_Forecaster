@@ -1,31 +1,30 @@
 // src/pages/Home.js
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Box, Container, HStack, Text, Grid, GridItem, Button, useDisclosure,
+  Box, Container, HStack, Text, Button, useDisclosure,
   Drawer, DrawerBody, DrawerContent, DrawerHeader, DrawerOverlay,
-  Alert, AlertIcon, IconButton, useToast, Stack, Divider, Skeleton
+  Alert, AlertIcon, IconButton, useToast, Divider, Skeleton
 } from "@chakra-ui/react";
 import { ArrowBackIcon, ArrowForwardIcon } from "@chakra-ui/icons";
 
 import { API_BASE } from "../api/base";
 import { explainForecast } from "../api/forecastService";
-
 import { useStores } from "../hooks/useStores";
 import { useForecast } from "../hooks/useForecast";
 
-import StoreSelector from "../components/StoreSelector";
+import StoreSelector from "../components/StoreSelector";          // must ONLY render a picker
 import ForecastChart from "../components/ForecastChart";
 import CategoryBreakdownChart from "../components/CategoryBreakdownChart";
 import AIInsight from "../components/AIInsight";
 import LoaderCard from "../components/LoaderCard";
 
-/* ---------- helpers ---------- */
+/* -------------- helpers -------------- */
 const fmtUSD = (n) =>
   typeof n === "number"
     ? n.toLocaleString(undefined, { style: "currency", currency: "USD" })
     : "—";
 
-/* ---------- reusable thin card ---------- */
+/* -------------- thin card -------------- */
 const CardShell = ({ title, right, children, ...props }) => (
   <Box borderWidth="1px" borderRadius="xl" bg="white" shadow="sm" p={4} {...props}>
     {(title || right) && (
@@ -38,7 +37,7 @@ const CardShell = ({ title, right, children, ...props }) => (
   </Box>
 );
 
-/* ---------- KPI ---------- */
+/* -------------- KPI -------------- */
 const ForecastKPI = ({ loading, value }) => (
   <CardShell title="Forecast">
     {loading ? (
@@ -59,26 +58,18 @@ const ForecastKPI = ({ loading, value }) => (
   </CardShell>
 );
 
-/* ---------- NEW: left card that always shows ---------- */
+/* -------------- Store card -------------- */
 function StoreSelectorCard({
-  storeList,
-  selectedStore,
-  setSelectedStore,
-  loadingStores,
-  storesError,
-  usedCacheRef,
-  retryRefresh,
-  etaMs,
+  storeList, selectedStore, setSelectedStore,
+  loadingStores, storesError, usedCacheRef, retryRefresh, etaMs,
 }) {
   return (
-    <CardShell title="Select a Store" minW="280px">
+    <CardShell title="Select a Store">
       {storesError && !usedCacheRef.current ? (
         <Alert status="error" borderRadius="lg" mb={3}>
           <AlertIcon />
           {storesError}
-          <Button ml={4} size="sm" onClick={() => window.location.reload()}>
-            Retry
-          </Button>
+          <Button ml={4} size="sm" onClick={() => window.location.reload()}>Retry</Button>
         </Alert>
       ) : loadingStores ? (
         <LoaderCard etaMs={etaMs} label="Loading stores…" />
@@ -89,20 +80,17 @@ function StoreSelectorCard({
         </Alert>
       ) : (
         <>
+          {/* IMPORTANT: StoreSelector should ONLY render the dropdown/button,
+              not any extra charts/cards. */}
           <StoreSelector
             storeList={storeList}
             selectedStore={selectedStore}
             setSelectedStore={setSelectedStore}
           />
           {storesError && usedCacheRef.current && (
-            <HStack mt={2} spacing={3}>
-              <Text fontSize="sm" color="orange.700">
-                {storesError}
-              </Text>
-              <Button size="xs" onClick={retryRefresh}>
-                Retry refresh
-              </Button>
-            </HStack>
+            <Text mt={2} fontSize="sm" color="orange.700">
+              {storesError} <Button size="xs" ml={2} onClick={retryRefresh}>Retry refresh</Button>
+            </Text>
           )}
         </>
       )}
@@ -129,16 +117,16 @@ export default function Home() {
       toast({ title: "Failed to load forecast", description: String(err), status: "error" }),
   });
 
-  // Category insight (tab)
+  // Category insight
   const [categoryInsight, setCategoryInsight] = useState("");
 
-  // Point popup
+  // Chart point popup
   const [focusPoint, setFocusPoint] = useState(null);
   const [focusLoading, setFocusLoading] = useState(false);
   const [focusSummary, setFocusSummary] = useState("");
   const pointReqRef = useRef(0);
 
-  // View toggle
+  // View toggle (Total vs Categories)
   const [graphViewIndex, setGraphViewIndex] = useState(0);
   const isCategoryView = ["total", "category"][graphViewIndex] === "category";
   const insightText = isCategoryView ? categoryInsight : summary;
@@ -146,8 +134,7 @@ export default function Home() {
 
   useEffect(() => setCategoryInsight(""), [selectedStore, graphViewIndex]);
 
-  const handleGraphViewChange = (dir) =>
-    setGraphViewIndex((i) => (dir === "prev" ? (i + 1) % 2 : (i + 1) % 2));
+  const toggleView = () => setGraphViewIndex(i => 1 - i);
 
   const handlePointSelect = async (pt) => {
     const reqId = ++pointReqRef.current;
@@ -155,7 +142,7 @@ export default function Home() {
     setFocusLoading(true);
     setFocusSummary("Analyzing…");
     try {
-      const series = timeline.map((p) => ({ date: p.date, value: p.total, source: p.source }));
+      const series = timeline.map(p => ({ date: p.date, value: p.total, source: p.source }));
       const focus = { date: pt.date, value: pt.value ?? pt.total, source: pt.source || "actual" };
       const ai = await explainForecast(series, focus);
       if (reqId !== pointReqRef.current) return;
@@ -182,7 +169,7 @@ export default function Home() {
 
   return (
     <Container maxW="7xl" py={6} className="dashboard-grid">
-      {/* Top row: left = store card, right = KPI */}
+      {/* LEFT COLUMN: top row (store + KPI) */}
       <Box className="dashboard-top">
         <StoreSelectorCard
           storeList={storeList}
@@ -194,62 +181,56 @@ export default function Home() {
           retryRefresh={retryRefresh}
           etaMs={etaMs}
         />
+
         <ForecastKPI loading={loadingForecast} value={forecastValue} />
       </Box>
 
-      {/* Chart directly under top row, left-aligned */}
+      {/* LEFT COLUMN: chart under top row */}
       <Box className="dashboard-chart">
-        {loadingForecast ? (
-          <LoaderCard etaMs={etaForecast} label="Loading Forecast…" />
-        ) : insightIsLoading ? (
-          <LoaderCard etaMs={etaAi} label="Generating AI Insight…" />
-        ) : (
-          <CardShell
-            title={isCategoryView ? "Category Breakdown" : "Sales Growth + Forecast"}
-            right={
-              <HStack spacing={1}>
-                <IconButton
-                  icon={<ArrowBackIcon />}
-                  onClick={() => handleGraphViewChange("prev")}
-                  aria-label="Prev"
-                  size="sm"
-                  variant="ghost"
-                />
-                <IconButton
-                  icon={<ArrowForwardIcon />}
-                  onClick={() => handleGraphViewChange("next")}
-                  aria-label="Next"
-                  size="sm"
-                  variant="ghost"
-                />
-              </HStack>
-            }
-          >
-            {isCategoryView ? (
-              <CategoryBreakdownChart
-                key={`cat-${Number(selectedStore?.value ?? selectedStore) || 0}`}
-                history={history}
-                storeId={Number(selectedStore?.value ?? selectedStore) || 0}
-                apiBase={API_BASE}
-                onInsightText={setCategoryInsight}
+        <CardShell
+          title={isCategoryView ? "Category Breakdown" : "Sales Growth + Forecast"}
+          right={
+            <HStack spacing={1}>
+              <IconButton
+                icon={<ArrowBackIcon />} aria-label="Prev" size="sm" variant="ghost"
+                onClick={toggleView}
               />
-            ) : (
-              <ForecastChart
-                history={history}
-                forecast={forecast}
-                height={380}
-                onPointSelect={handlePointSelect}
-                focusPoint={focusPoint}
-                focusSummary={focusSummary}
-                focusLoading={focusLoading}
-                onClosePopup={handleClosePopup}
+              <IconButton
+                icon={<ArrowForwardIcon />} aria-label="Next" size="sm" variant="ghost"
+                onClick={toggleView}
               />
-            )}
-          </CardShell>
-        )}
+            </HStack>
+          }
+        >
+          {loadingForecast ? (
+            <LoaderCard etaMs={etaForecast} label="Loading Forecast…" />
+          ) : insightIsLoading && !isCategoryView ? (
+            <LoaderCard etaMs={etaAi} label="Generating AI Insight…" />
+          ) : isCategoryView ? (
+            <CategoryBreakdownChart
+              key={`cat-${Number(selectedStore?.value ?? selectedStore) || 0}`}
+              history={history}
+              storeId={Number(selectedStore?.value ?? selectedStore) || 0}
+              apiBase={API_BASE}
+              onInsightText={setCategoryInsight}
+            />
+          ) : (
+            <ForecastChart
+              key={`tot-${Number(selectedStore?.value ?? selectedStore) || 0}`}
+              history={history}
+              forecast={forecast}
+              height={380}
+              onPointSelect={handlePointSelect}
+              focusPoint={focusPoint}
+              focusSummary={focusSummary}
+              focusLoading={focusLoading}
+              onClosePopup={handleClosePopup}
+            />
+          )}
+        </CardShell>
       </Box>
 
-      {/* Sticky AI panel on the right */}
+      {/* RIGHT COLUMN: sticky AI panel */}
       <Box className="dashboard-right" display={{ base: "none", lg: "block" }}>
         <CardShell title="AI Insight">
           <AIInsight
@@ -258,22 +239,15 @@ export default function Home() {
             boxProps={{ maxH: "58vh", overflowY: "auto", p: 0 }}
           />
           <Divider my={3} />
-          <Text mt={1} fontSize="xs" color="gray.500">
-            API: {API_BASE}
-          </Text>
+          <Text mt={1} fontSize="xs" color="gray.500">API: {API_BASE}</Text>
         </CardShell>
       </Box>
 
-      {/* Mobile drawer (unchanged) */}
+      {/* Mobile AI Drawer */}
       <Button
         display={{ base: "inline-flex", lg: "none" }}
-        position="fixed"
-        right={4}
-        bottom={4}
-        colorScheme="purple"
-        onClick={drawer.onOpen}
-        shadow="md"
-        borderRadius="lg"
+        position="fixed" right={4} bottom={4}
+        colorScheme="purple" onClick={drawer.onOpen} shadow="md" borderRadius="lg"
       >
         AI Insight
       </Button>
@@ -283,9 +257,7 @@ export default function Home() {
           <DrawerHeader>AI Insight</DrawerHeader>
           <DrawerBody>
             <AIInsight summary={insightText} loading={insightIsLoading} />
-            <Text mt={3} fontSize="xs" color="gray.500">
-              API: {API_BASE}
-            </Text>
+            <Text mt={3} fontSize="xs" color="gray.500">API: {API_BASE}</Text>
           </DrawerBody>
         </DrawerContent>
       </Drawer>
