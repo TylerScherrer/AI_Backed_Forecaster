@@ -11,6 +11,7 @@ import {
   ReferenceDot,
 } from "recharts";
 
+/* ----------------------------- formatting ----------------------------- */
 const fmtCurrency = (n) =>
   typeof n === "number"
     ? n.toLocaleString(undefined, {
@@ -19,39 +20,7 @@ const fmtCurrency = (n) =>
         maximumFractionDigits: 0,
       })
     : n;
-// --- Popup formatting & placement helpers ---
-const CARD_W = 420;
-const CARD_MAX_H = 260;
 
-const splitSections = (text) => {
-  const pieces = String(text || "").trim().split(/\n\s*\*\*?Next actions?:\*\*?\s*/i);
-  return { body: pieces[0] || "", actions: pieces[1] || "" };
-};
-
-const parseBullets = (s) =>
-  String(s || "")
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((l) => l.replace(/^[*•-]\s+/, "")); // strip bullet markers
-
-const renderInline = (s) => {
-  // Preserve **bold** from the model
-  const parts = String(s || "").split(/\*\*(.*?)\*\*/g);
-  return parts.map((p, i) => (i % 2 ? <strong key={i}>{p}</strong> : <span key={i}>{p}</span>));
-};
-
-const getPopupPos = (wrapEl, pt) => {
-  const w = wrapEl?.clientWidth || 0;
-  let x = (pt.cx ?? 0) + 12;
-  if (w && x + CARD_W > w) x = Math.max(0, (pt.cx ?? 0) - CARD_W - 12);
-
-  let y = (pt.cy ?? 0) - CARD_MAX_H - 12;
-  if (y < 0) y = (pt.cy ?? 0) + 12;
-  return { x, y };
-};
-
-// Safe month label from an ISO date string without using Date() (avoids TZ surprises)
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const makeLabel = (iso) => {
   const m = /(\d{4})-(\d{2})/.exec(String(iso || ""));
@@ -77,29 +46,60 @@ const pickValue = (p) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+/* ----------------------------- popup helpers ----------------------------- */
+const CARD_W = 420;
+const CARD_MAX_H = 260;
+
+const splitSections = (text) => {
+  const pieces = String(text || "").trim().split(/\n\s*\*\*?Next actions?:\*\*?\s*/i);
+  return { body: pieces[0] || "", actions: pieces[1] || "" };
+};
+
+const parseBullets = (s) =>
+  String(s || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.replace(/^[*•-]\s+/, ""));
+
+const renderInline = (s) => {
+  const parts = String(s || "").split(/\*\*(.*?)\*\*/g);
+  return parts.map((p, i) => (i % 2 ? <strong key={i}>{p}</strong> : <span key={i}>{p}</span>));
+};
+
+const getPopupPos = (wrapEl, pt) => {
+  const w = wrapEl?.clientWidth || 0;
+  let x = (pt.cx ?? 0) + 12;
+  if (w && x + CARD_W > w) x = Math.max(0, (pt.cx ?? 0) - CARD_W - 12);
+
+  let y = (pt.cy ?? 0) - CARD_MAX_H - 12;
+  if (y < 0) y = (pt.cy ?? 0) + 12;
+  return { x, y };
+};
+
+/* ----------------------------- clickable dots ----------------------------- */
 const ClickableDot = ({ cx, cy, payload, onSelect }) => {
   if (typeof cx !== "number" || typeof cy !== "number") return null;
   const handle = (e) => {
     e.stopPropagation();
-    const pt = {
+    onSelect?.({
       date: payload.date,
       label: payload.label,
       value: payload.y,
       source: payload.source || "history",
       cx,
       cy,
-    };
-    onSelect?.(pt);
+    });
   };
   return (
     <circle
       cx={cx}
       cy={cy}
-      r={5}
+      r={8}                     // larger hit area
       fill="#3182ce"
       stroke="#fff"
       strokeWidth={2}
-      style={{ cursor: "pointer" }}
+      style={{ cursor: "pointer", pointerEvents: "all" }}
       onClick={handle}
     />
   );
@@ -109,53 +109,50 @@ const ClickableActiveDot = ({ cx, cy, payload, onSelect }) => {
   if (typeof cx !== "number" || typeof cy !== "number") return null;
   const handle = (e) => {
     e.stopPropagation();
-    const pt = {
+    onSelect?.({
       date: payload.date,
       label: payload.label,
       value: payload.y,
       source: payload.source || "history",
       cx,
       cy,
-    };
-    onSelect?.(pt);
+    });
   };
   return (
     <circle
       cx={cx}
       cy={cy}
-      r={7}
+      r={10}                    // larger when active
       fill="#2b6cb0"
       stroke="#fff"
       strokeWidth={2}
-      style={{ cursor: "pointer" }}
+      style={{ cursor: "pointer", pointerEvents: "all" }}
       onClick={handle}
     />
   );
 };
 
+/* ----------------------------- main chart ----------------------------- */
 export default function ForecastChart({
   history = [],
   forecast = [],
   height = 360,
   onPointSelect,
-  focusPoint, // { date, label, value, source, cx, cy }
+  focusPoint,     // { date, label, value, source, cx, cy }
   focusSummary,
   focusLoading,
   onClosePopup,
+  showDebug = true,
 }) {
   const wrapRef = useRef(null);
 
-  useEffect(() => {
-    // mount log
-  }, []);
-
+  // Normalize history + forecast into one array with y/value, label, and source
   const data = useMemo(() => {
     const norm = (arr, src) =>
       (Array.isArray(arr) ? arr : []).map((p) => ({
         ...p,
         y: pickValue(p),
         source: p.source || src || "history",
-        // prefer backend label; fallback to ISO -> "Mon YY"
         label: p.label || makeLabel(p.date),
       }));
     const h = norm(history, "history");
@@ -163,10 +160,35 @@ export default function ForecastChart({
     return [...h, ...f];
   }, [history, forecast]);
 
+  // Hover/selection state and last mouse coordinates (for click-anywhere behavior)
   const [hoverIdx, setHoverIdx] = useState(null);
+  const [lastMouse, setLastMouse] = useState({ x: null, y: null });
+
+  // Approximate nearest data index from chartX if no active payload is available
+  const getNearestIdx = useCallback(
+    (chartX) => {
+      const svg = wrapRef.current?.querySelector("svg");
+      const w = svg?.getBoundingClientRect()?.width ?? 0;
+      if (!w || data.length <= 1 || typeof chartX !== "number") return null;
+      // crude but effective: map proportionally across available points
+      const frac = Math.max(0, Math.min(1, chartX / w));
+      return Math.round(frac * (data.length - 1));
+    },
+    [data.length]
+  );
 
   const handleMouseMove = useCallback(
     (e) => {
+      if (e && typeof e.chartX === "number" && typeof e.chartY === "number") {
+        setLastMouse({ x: e.chartX, y: e.chartY });
+      }
+
+      // Prefer explicit index from Recharts if present
+      if (typeof e?.activeTooltipIndex === "number") {
+        setHoverIdx(e.activeTooltipIndex);
+        return;
+      }
+
       if (e?.isTooltipActive && e?.activePayload?.[0]?.payload) {
         const payload = e.activePayload[0].payload;
         const idx =
@@ -174,55 +196,71 @@ export default function ForecastChart({
             ? data.indexOf(payload)
             : data.findIndex((d) => d.date === payload.date);
         setHoverIdx(idx >= 0 ? idx : null);
-      } else {
-        setHoverIdx(null);
+        return;
       }
+
+      // Fallback: try nearest based on X
+      if (typeof e?.chartX === "number") {
+        const idx = getNearestIdx(e.chartX);
+        setHoverIdx(idx);
+        return;
+      }
+
+      setHoverIdx(null);
     },
-    [data]
+    [data, getNearestIdx]
   );
-
-
 
   const handleChartClick = useCallback(
     (e) => {
-      if (!onPointSelect) return;
+      if (!onPointSelect || !data.length) return;
 
-      if (hoverIdx != null && data[hoverIdx]) {
-        const p = data[hoverIdx];
-        const pt = { date: p.date, label: p.label, value: p.y, source: p.source || "history" };
-        onPointSelect(pt);
-        return;
-      }
+      const useIdx =
+        (hoverIdx != null && hoverIdx >= 0 && hoverIdx < data.length)
+          ? hoverIdx
+          : (typeof e?.activeTooltipIndex === "number"
+              ? e.activeTooltipIndex
+              : (typeof e?.chartX === "number" ? getNearestIdx(e.chartX) : null));
 
-      const p = e?.activePayload?.[0]?.payload;
-      if (p) {
-        const pt = { date: p.date, label: p.label, value: p.y, source: p.source || "history" };
-        onPointSelect(pt);
-        return;
-      }
+      if (useIdx == null) return;
 
-      // If we get here, no active payload—nothing to select.
+      const p = data[useIdx];
+      onPointSelect({
+        date: p.date,
+        label: p.label,
+        value: p.y,
+        source: p.source || "history",
+        cx: e?.activePayload?.[0]?.cx ?? e?.activeCoordinate?.x ?? lastMouse.x ?? 0,
+        cy: e?.activePayload?.[0]?.cy ?? e?.activeCoordinate?.y ?? lastMouse.y ?? 0,
+      });
     },
-    [hoverIdx, data, onPointSelect]
+    [onPointSelect, data, hoverIdx, lastMouse, getNearestIdx]
   );
 
-// Compute popup position (only if we have a valid focus point)
-const popup =
-  focusPoint &&
-  focusPoint.label &&
-  typeof focusPoint.value === "number" &&
-  typeof focusPoint.cx === "number" &&
-  typeof focusPoint.cy === "number"
-    ? getPopupPos(wrapRef.current, focusPoint)
-    : null;
-
+  // Compute popup position when we have a focused point with pixel coords
+  const popup =
+    focusPoint &&
+    focusPoint.label &&
+    typeof focusPoint.value === "number" &&
+    typeof focusPoint.cx === "number" &&
+    typeof focusPoint.cy === "number"
+      ? getPopupPos(wrapRef.current, focusPoint)
+      : null;
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
       <ResponsiveContainer width="100%" height={height}>
-        <LineChart data={data} onMouseMove={handleMouseMove} onClick={handleChartClick} style={{ cursor: "pointer" }}>
+        <LineChart
+          data={data}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={() => {
+            setHoverIdx(null);
+            setLastMouse({ x: null, y: null });
+          }}
+          onClick={handleChartClick}
+          style={{ cursor: "pointer" }}
+        >
           <CartesianGrid strokeDasharray="3 3" vertical={false} />
-          {/* X-axis now uses the backend-provided (or derived) label directly */}
           <XAxis dataKey="label" />
           <YAxis tickFormatter={(v) => (typeof v === "number" ? v.toLocaleString() : v)} />
           <Tooltip
@@ -246,121 +284,128 @@ const popup =
             isAnimationActive={false}
           />
 
-
-          {/* ReferenceDot must use the same x domain as XAxis (label) */}
           {focusPoint && focusPoint.label && typeof focusPoint.value === "number" && (
-            <ReferenceDot x={focusPoint.label} y={focusPoint.value} r={6} fill="#e53e3e" stroke="#fff" isFront />
+            <ReferenceDot
+              x={focusPoint.label}
+              y={focusPoint.value}
+              r={6}
+              fill="#e53e3e"
+              stroke="#fff"
+              isFront
+            />
           )}
 
-         {popup && (
-  <foreignObject x={popup.x} y={popup.y} width={CARD_W} height={CARD_MAX_H}>
-    <div
-      style={{
-        position: "relative",
-        background: "white",
-        border: "1px solid #E2E8F0",
-        borderRadius: 12,
-        boxShadow: "0 8px 22px rgba(0,0,0,0.16)",
-        padding: 14,
-        fontSize: 13,
-        lineHeight: 1.45,
-        maxHeight: CARD_MAX_H,
-        overflow: "auto",
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          onClosePopup?.();
-        }}
-        style={{
-          position: "absolute",
-          top: 8,
-          right: 10,
-          border: "none",
-          background: "transparent",
-          cursor: "pointer",
-          fontSize: 18,
-          lineHeight: 1,
-        }}
-        aria-label="Close insight"
-        title="Close"
-      >
-        ×
-      </button>
+          {popup && (
+            <foreignObject x={popup.x} y={popup.y} width={CARD_W} height={CARD_MAX_H}>
+              <div
+                style={{
+                  position: "relative",
+                  background: "white",
+                  border: "1px solid #E2E8F0",
+                  borderRadius: 12,
+                  boxShadow: "0 8px 22px rgba(0,0,0,0.16)",
+                  padding: 14,
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  maxHeight: CARD_MAX_H,
+                  overflow: "auto",
+                }}
+                onClick={(ev) => ev.stopPropagation()}
+              >
+                <button
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onClosePopup?.();
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 10,
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    fontSize: 18,
+                    lineHeight: 1,
+                  }}
+                  aria-label="Close insight"
+                  title="Close"
+                >
+                  ×
+                </button>
 
-      {/* Header */}
-      <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>
-        {focusPoint.label} • {fmtCurrency(focusPoint.value)}
-        {focusPoint.source === "forecast" ? " (forecast)" : ""}
-      </div>
-
-      {/* Render cleaned bullets */}
-      <div>
-        {(() => {
-          const { body, actions } = splitSections(focusSummary);
-          const bodyBullets = parseBullets(body);
-          const actionBullets = parseBullets(actions);
-
-          return (
-            <>
-              {bodyBullets.length > 0 ? (
-                <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
-                  {bodyBullets.map((l, i) => (
-                    <li key={i} style={{ marginBottom: 4 }}>{renderInline(l)}</li>
-                  ))}
-                </ul>
-              ) : (
-                <div style={{ color: "#4A5568" }}>
-                  {focusLoading ? "Analyzing…" : focusSummary || "No insight available."}
+                <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>
+                  {focusPoint.label} • {fmtCurrency(focusPoint.value)}
+                  {focusPoint.source === "forecast" ? " (forecast)" : ""}
                 </div>
-              )}
 
-              {actionBullets.length > 0 && (
-                <>
-                  <div style={{ marginTop: 10, fontWeight: 700 }}>Next actions</div>
-                  <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
-                    {actionBullets.map((l, i) => (
-                      <li key={i} style={{ marginBottom: 4 }}>{renderInline(l)}</li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </>
-          );
-        })()}
-      </div>
-    </div>
-  </foreignObject>
-)}
+                <div>
+                  {(() => {
+                    const { body, actions } = splitSections(focusSummary);
+                    const bodyBullets = parseBullets(body);
+                    const actionBullets = parseBullets(actions);
 
+                    return (
+                      <>
+                        {bodyBullets.length > 0 ? (
+                          <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+                            {bodyBullets.map((l, i) => (
+                              <li key={i} style={{ marginBottom: 4 }}>
+                                {renderInline(l)}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div style={{ color: "#4A5568" }}>
+                            {focusLoading ? "Analyzing…" : focusSummary || "No insight available."}
+                          </div>
+                        )}
+
+                        {actionBullets.length > 0 && (
+                          <>
+                            <div style={{ marginTop: 10, fontWeight: 700 }}>Next actions</div>
+                            <ul style={{ margin: "6px 0 0 16px", padding: 0 }}>
+                              {actionBullets.map((l, i) => (
+                                <li key={i} style={{ marginBottom: 4 }}>
+                                  {renderInline(l)}
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </foreignObject>
+          )}
         </LineChart>
       </ResponsiveContainer>
 
-      {/* HUD */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 6,
-          left: 6,
-          background: "rgba(0,0,0,0.65)",
-          color: "white",
-          padding: "6px 8px",
-          fontSize: 11,
-          borderRadius: 6,
-          pointerEvents: "none",
-        }}
-      >
-        <div><b>DEBUG</b> ForecastChart</div>
-        <div>points: {data.length}</div>
-        <div>hoverIdx: {hoverIdx === null ? "null" : hoverIdx}</div>
-        <div>
-          focus: {focusPoint && focusPoint.label != null && focusPoint.value != null
-            ? `${focusPoint.label} • ${focusPoint.value}`
-            : "none"}
+      {showDebug && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 6,
+            left: 6,
+            background: "rgba(0,0,0,0.65)",
+            color: "white",
+            padding: "6px 8px",
+            fontSize: 11,
+            borderRadius: 6,
+            pointerEvents: "none",
+          }}
+        >
+          <div><b>DEBUG</b> ForecastChart</div>
+          <div>points: {data.length}</div>
+          <div>hoverIdx: {hoverIdx === null ? "null" : hoverIdx}</div>
+          <div>
+            focus: {focusPoint && focusPoint.label != null && focusPoint.value != null
+              ? `${focusPoint.label} • ${focusPoint.value}`
+              : "none"}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

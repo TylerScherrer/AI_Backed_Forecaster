@@ -1,23 +1,90 @@
-import React from "react";
-import { Box, Text, Spinner } from "@chakra-ui/react";
+// src/components/AIInsight.js
+import React, { useEffect, useMemo } from "react";
+import {
+  Box, HStack, Select, Spinner, Text, Spacer,
+  IconButton, Tooltip
+} from "@chakra-ui/react";
+import { RepeatIcon } from "@chakra-ui/icons";
+import { useSettings } from "../context/SettingsContext";
 
+export default function AIInsight({
+  topic = "Insight",
+  summary,
+  loading,
+  onRefetch,
+  autoRefetch = false, // keep false
+  boxProps = {},
+  children,
+}) {
+  const {
+    explainStyle, setExplainStyle,
+    readingLevel, setReadingLevel,
+  } = useSettings();
 
-// A small presentational component that shows an "AI Insight" card.
-// Props:
-//   - summary: string | undefined  → the text to display
-//   - loading: boolean             → whether we’re still fetching the summary
-//   - boxProps: object             → optional extra props for the outer Box (e.g. w, bg, borderColor)
-export default function AIInsight({ summary, loading, boxProps = {} }) {
+  useEffect(() => {
+    if (!autoRefetch || !onRefetch) return;
+    const id = setTimeout(() => onRefetch({ explainStyle, readingLevel }), 600);
+    return () => clearTimeout(id);
+  }, [autoRefetch, explainStyle, readingLevel, onRefetch]);
+
+  const content = useMemo(() => {
+    if (loading) {
+      return (
+        <HStack py={2}>
+          <Spinner size="sm" />
+          <Text fontSize="sm" color="gray.600">Generating insight…</Text>
+        </HStack>
+      );
+    }
+    if (children) return children;
+    if (summary?.trim()) return <Text whiteSpace="pre-wrap">{summary}</Text>;
+    return <Text fontSize="sm" color="gray.500">No insight yet.</Text>;
+  }, [loading, summary, children]);
+
   return (
-    <Box maxW="750px" mx="50" mt={4} p={4} borderWidth="1px" borderRadius="lg" bg="gray.50" {...boxProps}>
-      <Text fontWeight="bold" mb={2}>
-         AI Insight:
-      </Text>
-      {loading ? (
-        <Spinner size="sm" />
-      ) : (
-        <Text whiteSpace="pre-wrap">{summary || "No insight yet."}</Text>
-      )}
+    <Box {...boxProps}>
+      <HStack mb={2}>
+        <Text fontWeight="semibold">{topic}</Text>
+        <Spacer />
+        <Tooltip label="Regenerate with AI">
+          <IconButton
+            aria-label="Regenerate"
+            icon={<RepeatIcon />}
+            size="sm"
+            variant="ghost"
+            onClick={() => onRefetch?.({ explainStyle, readingLevel })}
+            isDisabled={!onRefetch}
+            isLoading={loading}
+          />
+        </Tooltip>
+        <Select
+          w="150px"
+          size="sm"
+          value={explainStyle}
+          onChange={(e) => setExplainStyle(e.target.value)}
+          isDisabled={loading}
+        >
+          <option value="bullets">Bullets</option>
+          <option value="narrative">Narrative</option>
+          <option value="actions">Action plan</option>
+        </Select>
+        <Select
+          w="150px"
+          size="sm"
+          value={readingLevel}
+          onChange={(e) => setReadingLevel(e.target.value)}
+          isDisabled={loading}
+        >
+          <option value="simple">Simple</option>
+          <option value="balanced">Balanced</option>
+          <option value="advanced">Advanced</option>
+          <option value="pro">Pro</option>
+        </Select>
+      </HStack>
+
+      <Box fontSize="sm">
+        {content}
+      </Box>
     </Box>
   );
 }
