@@ -1,70 +1,42 @@
-// frontend/src/components/StoreSelector.js
-
-import {
-  Button,
-  Card,
-  CardBody,
-  Flex,
-  Heading,
-  Select,
-  Text,
-} from "@chakra-ui/react";
-import { useEffect, useState } from "react";
-import ForecastCard from "./ForecastCard";
-import ForecastChart from "./ForecastChart";
+// src/components/StoreSelector.js
+import { Button, FormLabel, Select, Text, VStack } from "@chakra-ui/react";
 
 export default function StoreSelector({
-  storeList,
+  storeList = [],
   selectedStore,
   setSelectedStore,
-  history,
-  forecast,
 }) {
-  const [selectedForecast, setSelectedForecast] = useState(null);
+  const handleChange = (e) => {
+    const v = Number(e.target.value);
+    setSelectedStore(Number.isFinite(v) ? v : null);
+  };
 
-  useEffect(() => {
-    const selected = storeList.find((s) => s.value === selectedStore);
-    setSelectedForecast(selected?.forecast || null);
-  }, [selectedStore, storeList]);
+  const selected =
+    storeList.find((s) => s.value === (selectedStore?.value ?? selectedStore)) ||
+    null;
 
   return (
-    <Flex direction="row" justify="flex-start" align="flex-start" p={6} gap={12}>
-      {/* Store Picker */}
-      <Card maxW="850px" mx="-250" width="300px" boxShadow="md" p={4}>
-        <CardBody>
-          <Heading size="md" mb={4}>Select a Store</Heading>
-          <Select
-            placeholder="Choose a store"
-            value={selectedStore}
-            onChange={(e) => setSelectedStore(Number(e.target.value))}
-            mb={3}
-          >
-            {storeList.map(({ value, label }) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </Select>
+    <VStack align="stretch" spacing={3}>
+      <FormLabel m={0}>Store</FormLabel>
+      <Select
+        placeholder="Choose a store"
+        value={selected?.value ?? selectedStore ?? ""}
+        onChange={handleChange}
+      >
+        {storeList.map(({ value, label }) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </Select>
 
-          {selectedStore && (
-            <Text fontSize="sm">
-              You selected store <Text as="span" fontWeight="bold">{selectedStore}</Text>
-            </Text>
-          )}
+      {selected && (
+        <Text fontSize="sm" color="gray.600">
+          You selected store <Text as="span" fontWeight="bold">{selected.value}</Text>
+        </Text>
+      )}
 
-          <Button mt={4} colorScheme="blue" width="100%">
-            Continue
-          </Button>
-        </CardBody>
-      </Card>
-
-      {/* Forecast Summary Card */}
-      {selectedForecast !== null && <ForecastCard forecast={selectedForecast} />}
-
-      {/* Forecast Trend Chart */}
-      {history?.length > 0 && forecast !== null && (
-  <ForecastChart history={history} forecast={forecast} />
-)}
-
-
-    </Flex>
+      <Button colorScheme="blue">Continue</Button>
+    </VStack>
   );
 }
